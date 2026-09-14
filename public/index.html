@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>算法对数器</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header><span class="eyebrow">STRESS TEST LAB</span><h1>算法对数器</h1><p>生成可复现的随机数据，用最直接的参考实现逐例验证 Java、C++、Python 算法。</p></header>
+    <section class="notice"><strong>仅运行可信代码</strong><span>源码会在本机临时目录编译执行，完成后自动删除；本工具不是安全沙箱。</span></section>
+    <form id="form">
+      <section class="card files">
+        <div class="section-title"><span>01</span><div><h2>选择算法</h2><p>上传待测算法与独立的朴素参考实现</p></div></div>
+        <div class="columns">
+          <div class="upload-box">
+            <label>待测文件 <em>必填</em></label><input id="candidateFile" type="file" accept=".java,.cpp,.py" required>
+            <div class="row"><label>执行方式<select id="candidateMode"><option value="program">程序模式（stdin/stdout）</option><option value="function">函数模式（忽略自带对数器）</option></select></label><label class="fn hidden">函数名<input id="candidateFn" value="solve"></label></div>
+            <small class="file-meta" id="candidateMeta">支持 .java / .cpp / .py，最大 1 MB</small>
+          </div>
+          <div class="upload-box oracle">
+            <label>参考实现 <em>必填</em></label><input id="oracleFile" type="file" accept=".java,.cpp,.py" required>
+            <div class="row"><label>执行方式<select id="oracleMode"><option value="program">程序模式（stdin/stdout）</option><option value="function">函数模式</option></select></label><label class="fn hidden">函数名<input id="oracleFn" value="solve"></label></div>
+            <small class="file-meta" id="oracleMeta">建议使用遍历、排序等容易确认正确的写法</small>
+          </div>
+        </div>
+        <details><summary>函数模式接口约定</summary><pre>Python: def solve(data: str) -> str
+C++:    std::string solve(const std::string&amp; data)
+Java:   public static String solve(String data)</pre><p>函数模式不会调用上传文件原有的 main；Python 还会过滤顶层测试语句。</p></details>
+      </section>
+
+      <section class="card">
+        <div class="section-title"><span>02</span><div><h2>生成测试数据</h2><p>同一随机种子始终生成同一批输入</p></div></div>
+        <div class="grid">
+          <label class="wide">用自然语言描述测试数据要求<textarea id="requirement" rows="4" required placeholder="例如：长度 1 到 50、元素范围 [-100,100]、相邻两项不相等的整数数组">长度 1 到 50、元素范围 [-100,100]、相邻两项不相等的整数数组</textarea><small>支持描述：元素互不相同、严格递增/递减、正整数、非负整数、奇数、偶数、矩阵、小写字符串等。</small></label>
+          <label>测试数量<input id="count" type="number" min="1" max="10000" value="300"></label>
+          <label>随机种子<input id="seed" type="number" value="20260914"></label>
+          <label>未写数值范围时的默认值<div class="inline"><input id="min" type="number" value="-100"><span>—</span><input id="max" type="number" value="100"></div></label>
+          <label>未写规模时的默认值<div class="inline"><input id="minSize" type="number" min="0" value="1"><span>—</span><input id="maxSize" type="number" min="0" value="50"></div></label>
+        </div>
+      </section>
+
+      <section class="card compact">
+        <div class="section-title"><span>03</span><div><h2>AI 辅助</h2><p>连接云端 API 或本地部署模型，补充边界数据并分析复杂度</p></div></div>
+        <label class="ai-toggle"><input id="aiEnabled" type="checkbox">启用大模型辅助</label>
+        <div id="aiConfig" class="grid hidden">
+          <label>接口协议<select id="aiProtocol"><option value="openai_responses">OpenAI Responses API</option><option value="openai_compatible">OpenAI-compatible</option><option value="ollama">Ollama</option></select></label>
+          <label>API 地址<input id="aiBaseUrl" type="url" value="https://api.openai.com/v1" placeholder="http://127.0.0.1:11434"></label>
+          <label>模型名称<input id="aiModel" placeholder="例如 gpt-5.4-mini 或 qwen3"></label>
+          <label>API Key（本地模型可留空）<input id="aiApiKey" type="password" autocomplete="off" placeholder="只用于本次请求，不会保存"></label>
+          <label class="check"><input id="aiFallback" type="checkbox" checked>AI 不可用时回退到本地规则</label>
+          <div class="ai-help">AI 最多补充 20 个针对性边界样例，其余批量数据仍由本地生成器完成。上传的算法源码和数据要求会发送给所配置的模型服务。</div>
+        </div>
+      </section>
+
+      <section class="card compact">
+        <div class="section-title"><span>04</span><div><h2>判定设置</h2><p>控制超时和输出比较规则</p></div></div>
+        <div class="grid settings">
+          <label>单例超时（ms）<input id="timeout" type="number" min="100" max="10000" value="2000"></label>
+          <label>输出比较<select id="compare"><option value="tokens">忽略所有空白差异</option><option value="trim">忽略行尾与首尾空白</option><option value="exact">完全一致</option></select></label>
+          <label>最多展示失败数<input id="maxFailures" type="number" min="1" max="20" value="5"></label>
+          <label class="check"><input id="stop" type="checkbox">发现首个错误后停止</label>
+        </div>
+      </section>
+      <button id="run" class="run" type="submit"><span>开始批量检验</span><b>→</b></button>
+    </form>
+    <section id="result" class="card result hidden" aria-live="polite"></section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

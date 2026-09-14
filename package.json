@@ -1,0 +1,13 @@
+{
+  "name": "algorithm-stress-tester",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Java/C++/Python algorithm stress tester",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
