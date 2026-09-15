@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { parseRequirement, generateCases, normalize, languageOf, analyzeComplexity, parseModelJson, requestAiAnalysis, stress } = require('../server');
+const { parseRequirement, generateCases, normalize, languageOf, analyzeComplexity, parseModelJson, requestAiAnalysis, inferRequirementFromSource, inferProperties, validateProperties, stress } = require('../server');
 
 test('detects supported languages', () => {
   assert.equal(languageOf('Main.java'), 'java'); assert.equal(languageOf('a.cpp'), 'cpp'); assert.equal(languageOf('x.py'), 'python'); assert.equal(languageOf('x.js'), undefined);
@@ -72,6 +72,30 @@ test('calls an OpenAI-compatible local model endpoint', async () => {
     assert.equal(received.url, '/v1/chat/completions'); assert.equal(received.auth, 'Bearer secret');
     assert.equal(received.body.model, 'local-test'); assert.equal(result.edgeCases.length, 1); assert.equal(result.complexity.time, 'O(n)');
   } finally { await new Promise(resolve => mock.close(resolve)); }
+});
+
+test('infers sorting input and validates a sorted permutation', () => {
+  const candidate = {filename:'sort.py',content:'a=list(map(int,input().split())); print(*sorted(a))'};
+  assert.match(inferRequirementFromSource(candidate), /整数数组/);
+  assert.deepEqual(inferProperties(candidate), ['sorted_permutation']);
+  assert.deepEqual(validateProperties('3\n3 1 2\n', '1 2 3\n', ['sorted_permutation']), []);
+  assert.match(validateProperties('3\n3 1 2\n', '1 2 2\n', ['sorted_permutation'])[0], /非递减排列/);
+});
+
+test('quick mode works without requirement, API, or oracle', async () => {
+  const code = `import sys\na=list(map(int,sys.stdin.read().split()))[1:]\nprint(*sorted(a))\n`;
+  const result = await stress({ mode:'quick', candidate:{filename:'sort.py',content:code}, generator:{count:20,seed:11,min:-9,max:9,minSize:0,maxSize:8}, ai:{auto:false,enabled:false}, options:{compareMode:'tokens',timeoutMs:2000} });
+  assert.equal(result.failed, 0); assert.equal(result.verification.mode, 'quick'); assert.deepEqual(result.verification.properties, ['sorted_permutation']);
+});
+
+test('quick mode catches a violated inferred property', async () => {
+  const code = `import sys\na=list(map(int,sys.stdin.read().split()))[1:]\na.sort()\nif a: a[-1]=a[0]\nprint(*a)\n`;
+  const result = await stress({ mode:'quick', candidate:{filename:'bad_sort.py',content:code}, generator:{count:10,seed:12,min:0,max:9,minSize:3,maxSize:6}, ai:{auto:false}, options:{compareMode:'tokens',timeoutMs:2000,maxFailures:2} });
+  assert.ok(result.failed > 0); assert.match(result.failures[0].expected.stderr, /非递减排列/);
+});
+
+test('strict mode still requires an oracle', async () => {
+  await assert.rejects(() => stress({mode:'strict',candidate:{filename:'a.py',content:'print(1)'},generator:{count:1}}), /必须上传参考实现/);
 });
 
 test('comparison modes work', () => {

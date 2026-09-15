@@ -11,6 +11,10 @@
     <header><span class="eyebrow">STRESS TEST LAB</span><h1>算法对数器</h1><p>生成可复现的随机数据，用最直接的参考实现逐例验证 Java、C++、Python 算法。</p></header>
     <section class="notice"><strong>仅运行可信代码</strong><span>源码会在本机临时目录编译执行，完成后自动删除；本工具不是安全沙箱。</span></section>
     <form id="form">
+      <section class="card mode-card">
+        <label>检验模式<select id="verificationMode"><option value="quick">极速模式（只上传待测代码）</option><option value="strict">严格模式（与参考实现对拍）</option></select></label>
+        <p id="modeHint">自动推断输入结构并进行确定性、崩溃、超时和可识别性质检查。结果为“未发现问题”，不宣称完全正确。</p>
+      </section>
       <section class="card files">
         <div class="section-title"><span>01</span><div><h2>选择算法</h2><p>上传待测算法与独立的朴素参考实现</p></div></div>
         <div class="columns">
@@ -19,8 +23,8 @@
             <div class="row"><label>执行方式<select id="candidateMode"><option value="program">程序模式（stdin/stdout）</option><option value="function">函数模式（忽略自带对数器）</option></select></label><label class="fn hidden">函数名<input id="candidateFn" value="solve"></label></div>
             <small class="file-meta" id="candidateMeta">支持 .java / .cpp / .py，最大 1 MB</small>
           </div>
-          <div class="upload-box oracle">
-            <label>参考实现 <em>必填</em></label><input id="oracleFile" type="file" accept=".java,.cpp,.py" required>
+          <div class="upload-box oracle hidden" id="oracleBox">
+            <label>参考实现 <em>严格模式必填</em></label><input id="oracleFile" type="file" accept=".java,.cpp,.py">
             <div class="row"><label>执行方式<select id="oracleMode"><option value="program">程序模式（stdin/stdout）</option><option value="function">函数模式</option></select></label><label class="fn hidden">函数名<input id="oracleFn" value="solve"></label></div>
             <small class="file-meta" id="oracleMeta">建议使用遍历、排序等容易确认正确的写法</small>
           </div>
@@ -33,7 +37,7 @@ Java:   public static String solve(String data)</pre><p>函数模式不会调用
       <section class="card">
         <div class="section-title"><span>02</span><div><h2>生成测试数据</h2><p>同一随机种子始终生成同一批输入</p></div></div>
         <div class="grid">
-          <label class="wide">用自然语言描述测试数据要求<textarea id="requirement" rows="4" required placeholder="例如：长度 1 到 50、元素范围 [-100,100]、相邻两项不相等的整数数组">长度 1 到 50、元素范围 [-100,100]、相邻两项不相等的整数数组</textarea><small>支持描述：元素互不相同、严格递增/递减、正整数、非负整数、奇数、偶数、矩阵、小写字符串等。</small></label>
+          <label class="wide">测试数据要求（极速模式可留空）<textarea id="requirement" rows="4" placeholder="留空时从源码推断；或输入：长度 1 到 50、元素范围 [-100,100]、相邻两项不相等的整数数组"></textarea><small>留空时从源码和可用大模型推断。也支持手动描述元素互异、递增/递减、正负数、奇偶数等。</small></label>
           <label>测试数量<input id="count" type="number" min="1" max="10000" value="300"></label>
           <label>随机种子<input id="seed" type="number" value="20260914"></label>
           <label>未写数值范围时的默认值<div class="inline"><input id="min" type="number" value="-100"><span>—</span><input id="max" type="number" value="100"></div></label>
@@ -43,7 +47,9 @@ Java:   public static String solve(String data)</pre><p>函数模式不会调用
 
       <section class="card compact">
         <div class="section-title"><span>03</span><div><h2>AI 辅助</h2><p>连接云端 API 或本地部署模型，补充边界数据并分析复杂度</p></div></div>
-        <label class="ai-toggle"><input id="aiEnabled" type="checkbox">启用大模型辅助</label>
+        <label class="ai-toggle"><input id="aiAuto" type="checkbox" checked>自动寻找已配置API或本地模型</label>
+        <div id="aiDiscovery" class="ai-status">正在检测环境变量、Ollama、LM Studio和vLLM…</div>
+        <label class="ai-toggle"><input id="aiEnabled" type="checkbox">手动填写大模型配置</label>
         <div id="aiConfig" class="grid hidden">
           <label>接口协议<select id="aiProtocol"><option value="openai_responses">OpenAI Responses API</option><option value="openai_compatible">OpenAI-compatible</option><option value="ollama">Ollama</option></select></label>
           <label>API 地址<input id="aiBaseUrl" type="url" value="https://api.openai.com/v1" placeholder="http://127.0.0.1:11434"></label>

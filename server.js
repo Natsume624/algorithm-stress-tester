@@ -271,7 +271,7 @@ async function requestAiAnalysis(ai, requirement, candidate) {
   const protocol = ai.protocol || 'openai_compatible';
   const model = String(ai.model || '').trim();
   if (!model) throw new UserError('启用 AI 后必须填写模型名称');
-  const prompt = `你是算法对数器的数据设计与复杂度分析模块。\n用户的数据要求：${requirement}\n待测文件：${candidate.filename}\n源码：\n${String(candidate.content || '').slice(0, 60000)}\n\n只返回一个 JSON 对象，不要 Markdown。结构：{"generator":{"preset":"int_array|two_int_arrays|matrix|lowercase_string|integer|integer_pair","min":整数,"max":整数,"minSize":整数,"maxSize":整数,"adjacentUnequal":布尔,"unique":布尔,"ascending":布尔,"descending":布尔,"even":布尔,"odd":布尔},"edgeCases":["完整的stdin输入字符串，最多20项"],"interpretation":["简短中文规则"],"complexity":{"time":"大O表示","space":"额外空间大O表示","confidence":"高|中|低","timeReason":"中文依据","spaceReason":"中文依据","note":"局限说明"}}。edgeCases 必须严格符合用户要求和程序输入格式；复杂度只分析算法实现，忽略对数器和测试代码。`;
+  const prompt = `你是算法对数器的数据设计与复杂度分析模块。\n用户的数据要求（可能为空，请结合源码推断）：${requirement}\n待测文件：${candidate.filename}\n源码：\n${String(candidate.content || '').slice(0, 60000)}\n\n只返回一个 JSON 对象，不要 Markdown。结构：{"generator":{"preset":"int_array|two_int_arrays|matrix|lowercase_string|integer|integer_pair","min":整数,"max":整数,"minSize":整数,"maxSize":整数,"adjacentUnequal":布尔,"unique":布尔,"ascending":布尔,"descending":布尔,"even":布尔,"odd":布尔},"edgeCases":["完整的stdin输入字符串，最多20项"],"interpretation":["简短中文规则"],"properties":["sorted_permutation|nonnegative_number|output_from_input"],"complexity":{"time":"大O表示","space":"额外空间大O表示","confidence":"高|中|低","timeReason":"中文依据","spaceReason":"中文依据","note":"局限说明"}}。properties 只能从给定枚举中选择，无法确定就返回空数组。edgeCases 必须严格符合推断的程序输入格式；复杂度只分析算法实现，忽略对数器和测试代码。`;
   const headers = { 'content-type': 'application/json' };
   if (ai.apiKey) headers.authorization = `Bearer ${ai.apiKey}`;
   let url, payload, extract;
@@ -300,7 +300,75 @@ async function requestAiAnalysis(ai, requirement, candidate) {
   const edgeCases = Array.isArray(result.edgeCases) ? result.edgeCases.filter(x => typeof x === 'string' && x.length <= 100000).slice(0, 20) : [];
   const generator = result.generator && typeof result.generator === 'object' ? result.generator : {};
   const complexity = result.complexity && typeof result.complexity === 'object' ? result.complexity : null;
-  return { generator, edgeCases, interpretation: Array.isArray(result.interpretation) ? result.interpretation.map(String).slice(0, 12) : [], complexity, model, protocol };
+  const allowedProperties = ['sorted_permutation','nonnegative_number','output_from_input'];
+  const properties = Array.isArray(result.properties) ? result.properties.filter(x => allowedProperties.includes(x)) : [];
+  return { generator, edgeCases, interpretation: Array.isArray(result.interpretation) ? result.interpretation.map(String).slice(0, 12) : [], properties, complexity, model, protocol };
+}
+
+function inferRequirementFromSource(candidate = {}) {
+  const source = String(candidate.content || '');
+  if (/\b(?:sort|sorted|Arrays\.sort|Collections\.sort)\s*\(/.test(source)) return '整数数组；算法疑似排序，输出为排序后的全部元素';
+  if (/\b(?:gcd|最大公约数)\b/i.test(source)) return '两个整数';
+  if (/\b(?:matrix|grid|二维|rows?|cols?)\b/i.test(source)) return '整数矩阵';
+  if (/\b(?:string|String|str)\b/.test(source) && !/vector\s*<\s*int|int\s*\[/.test(source)) return '小写字符串';
+  return '整数数组';
+}
+
+async function probeJson(url, timeoutMs = 700) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal:controller.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+
+async function discoverAiConfig() {
+  if (process.env.OPENAI_MODEL && (process.env.OPENAI_API_KEY || process.env.OPENAI_BASE_URL)) {
+    return { available:true, source:'环境变量', protocol:'openai_responses', baseUrl:process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1', model:process.env.OPENAI_MODEL, apiKey:process.env.OPENAI_API_KEY || '' };
+  }
+  const ollama = await probeJson('http://127.0.0.1:11434/api/tags');
+  const ollamaModel = ollama?.models?.[0]?.name;
+  if (ollamaModel) return { available:true, source:'Ollama', protocol:'ollama', baseUrl:'http://127.0.0.1:11434', model:ollamaModel, apiKey:'' };
+  for (const port of [1234, 8000]) {
+    const compatible = await probeJson(`http://127.0.0.1:${port}/v1/models`);
+    const model = compatible?.data?.[0]?.id;
+    if (model) return { available:true, source:port === 1234 ? 'LM Studio' : '本地OpenAI-compatible', protocol:'openai_compatible', baseUrl:`http://127.0.0.1:${port}/v1`, model, apiKey:'' };
+  }
+  return { available:false, source:null };
+}
+
+async function resolveAiConfig(ai = {}) {
+  if (ai.enabled && ai.model && ai.baseUrl) return { ...ai, available:true, source:'手动配置' };
+  if (ai.auto) return discoverAiConfig();
+  return { available:false };
+}
+
+function inferProperties(candidate = {}) {
+  const source = String(candidate.content || '');
+  const properties = [];
+  if (/\b(?:sort|sorted|Arrays\.sort|Collections\.sort)\s*\(/.test(source)) properties.push('sorted_permutation');
+  if (/\b(?:abs|Math\.abs|fabs)\s*\(/.test(source)) properties.push('nonnegative_number');
+  return properties;
+}
+
+function validateProperties(input, output, properties) {
+  const failures = [];
+  const inputNumbers = String(input).trim().split(/\s+/).map(Number);
+  const outputTokens = String(output).trim().split(/\s+/).filter(Boolean);
+  if (properties.includes('sorted_permutation')) {
+    const n = inputNumbers[0], values = inputNumbers.slice(1, n + 1), actual = outputTokens.map(Number);
+    const expected = [...values].sort((a,b) => a-b);
+    if (actual.length !== expected.length || actual.some((x,i) => x !== expected[i])) failures.push('输出不是输入元素的非递减排列');
+  }
+  if (properties.includes('nonnegative_number')) {
+    const value = Number(outputTokens[0]); if (!Number.isFinite(value) || value < 0) failures.push('输出不是非负数');
+  }
+  if (properties.includes('output_from_input')) {
+    const values = new Set(inputNumbers.slice(1).map(String)); if (outputTokens.some(x => !values.has(x))) failures.push('输出包含输入中不存在的值');
+  }
+  return failures;
 }
 
 function runProcess(command, args, options = {}) {
@@ -389,12 +457,17 @@ async function prepareProgram(spec, root, label) {
 }
 
 async function stress(body) {
-  const requirement = String(body.generator?.requirement || '');
+  const quickMode = body.mode === 'quick' || (!body.mode && !body.oracle?.content);
+  if (!quickMode && !body.oracle?.content) throw new UserError('严格模式必须上传参考实现');
+  const requirement = String(body.generator?.requirement || '').trim() || inferRequirementFromSource(body.candidate);
   let generator = parseRequirement(requirement, body.generator || {});
   let aiResult = null, aiWarning = null;
-  if (body.ai?.enabled) {
+  let resolvedAi = { available:false };
+  if (body.ai?.enabled || body.ai?.auto) {
     try {
-      aiResult = await requestAiAnalysis(body.ai, requirement, body.candidate || {});
+      resolvedAi = await resolveAiConfig(body.ai);
+      if (!resolvedAi.available) throw new UserError('未发现已配置的云端模型、Ollama、LM Studio或vLLM');
+      aiResult = await requestAiAnalysis(resolvedAi, requirement, body.candidate || {});
       const plan = aiResult.generator;
       const allowed = ['int_array','two_int_arrays','matrix','lowercase_string','integer','integer_pair'];
       generator = {
@@ -431,17 +504,20 @@ async function stress(body) {
   const started = Date.now();
   try {
     const candidate = await prepareProgram(body.candidate || {}, root, 'candidate');
-    const oracle = await prepareProgram(body.oracle || {}, root, 'oracle');
+    const oracle = quickMode ? null : await prepareProgram(body.oracle || {}, root, 'oracle');
+    const properties = [...new Set([...inferProperties(body.candidate), ...(aiResult?.properties || [])])];
     const failures = [];
     let passed = 0, candidateMs = 0, oracleMs = 0;
     for (let index = 0; index < cases.length; index++) {
       const input = cases[index];
-      const [actual, expected] = await Promise.all([
+      const [actual, comparison] = await Promise.all([
         runProcess(candidate.command, candidate.args, { cwd: candidate.cwd, input, timeoutMs }),
-        runProcess(oracle.command, oracle.args, { cwd: oracle.cwd, input, timeoutMs })
+        runProcess((oracle || candidate).command, (oracle || candidate).args, { cwd:(oracle || candidate).cwd, input, timeoutMs })
       ]);
+      const propertyErrors = quickMode && actual.ok ? validateProperties(input, actual.stdout, properties) : [];
+      const expected = quickMode ? { ...comparison, stderr: propertyErrors.join('；'), quick:true } : comparison;
       candidateMs += actual.ms; oracleMs += expected.ms;
-      const same = actual.ok && expected.ok && normalize(actual.stdout, body.options?.compareMode) === normalize(expected.stdout, body.options?.compareMode);
+      const same = actual.ok && expected.ok && propertyErrors.length === 0 && normalize(actual.stdout, body.options?.compareMode) === normalize(expected.stdout, body.options?.compareMode);
       if (same) passed++;
       else if (failures.length < maxFailures) failures.push({ index: index + 1, input, actual, expected });
       if (!same && body.options?.stopOnFirst) break;
@@ -455,7 +531,7 @@ async function stress(body) {
       timeReason: String(aiComplexity.timeReason || '由大模型基于源码分析'), spaceReason: String(aiComplexity.spaceReason || '由大模型基于源码分析'),
       note: String(aiComplexity.note || '大模型分析并非形式化证明，请结合代码人工复核。'), source: 'AI'
     } : { ...staticComplexity, source:'本地规则' }) : null;
-    return { total: executed, requested: cases.length, executed, passed, failed, failures, candidateMs, oracleMs, elapsedMs: Date.now() - started, seed: Number(body.generator?.seed) || 1, interpretation: generator.interpretation, complexity, ai: { enabled: !!body.ai?.enabled, used: !!aiResult, model: aiResult?.model || null, protocol: aiResult?.protocol || null, edgeCases: aiCases.length, warning: aiWarning } };
+    return { total: executed, requested: cases.length, executed, passed, failed, failures, candidateMs, oracleMs, elapsedMs: Date.now() - started, seed: Number(body.generator?.seed) || 1, interpretation: generator.interpretation, complexity, verification: { mode:quickMode ? 'quick' : 'strict', properties, claim:quickMode ? '完成确定性、运行安全与可识别性质检查；未发现问题不等同于证明算法正确。' : '候选算法与独立参考实现逐例输出一致。' }, ai: { enabled: !!(body.ai?.enabled || body.ai?.auto), used: !!aiResult, source:resolvedAi.source || null, model: aiResult?.model || null, protocol: aiResult?.protocol || null, edgeCases: aiCases.length, warning: aiWarning } };
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -476,6 +552,10 @@ async function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && req.url === '/api/health') return json(res, 200, { ok: true, languages: ['java', 'cpp', 'python'] });
+    if (req.method === 'GET' && req.url === '/api/ai/discover') {
+      const found = await discoverAiConfig();
+      return json(res, 200, { available:found.available, source:found.source || null, protocol:found.protocol || null, baseUrl:found.baseUrl || null, model:found.model || null });
+    }
     if (req.method === 'POST' && req.url === '/api/run') return json(res, 200, await stress(await readJson(req)));
     if (req.method === 'GET') return serveStatic(req, res);
     json(res, 405, { error: 'Method not allowed' });
@@ -485,4 +565,4 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) server.listen(PORT, '127.0.0.1', () => console.log(`算法对数器已启动：http://127.0.0.1:${PORT}`));
-module.exports = { parseRequirement, generateCases, normalize, languageOf, analyzeComplexity, parseModelJson, requestAiAnalysis, stress, server };
+module.exports = { parseRequirement, generateCases, normalize, languageOf, analyzeComplexity, parseModelJson, requestAiAnalysis, inferRequirementFromSource, inferProperties, validateProperties, discoverAiConfig, stress, server };
